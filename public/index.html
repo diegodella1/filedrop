@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FileDrop</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <style>
+    .drop-active { border-color: #3b82f6 !important; background-color: rgba(59,130,246,0.08) !important; }
+    .fade-in { animation: fadeIn 0.15s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .progress-bar { transition: width 0.2s ease; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div id="app" class="max-w-4xl mx-auto px-4 py-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
+        <svg class="w-7 h-7 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+        FileDrop
+      </h1>
+      <button onclick="showNewFolderModal()" class="bg-blue-500 hover:bg-blue-600 text-white text-sm px-3 py-2 rounded-lg flex items-center gap-1 transition">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        New Folder
+      </button>
+    </div>
+
+    <!-- Breadcrumbs -->
+    <nav id="breadcrumbs" class="flex items-center gap-1 text-sm text-gray-500 mb-4 flex-wrap"></nav>
+
+    <!-- Drop Zone -->
+    <div id="dropzone"
+      class="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center mb-4 transition-all cursor-pointer hover:border-blue-400"
+      onclick="document.getElementById('fileInput').click()">
+      <svg class="w-10 h-10 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+      <p class="text-gray-500 font-medium">Drop files here or click to upload</p>
+      <p class="text-gray-400 text-xs mt-1">Multiple files supported</p>
+      <input type="file" id="fileInput" multiple class="hidden" onchange="handleFileSelect(this.files)">
+    </div>
+
+    <!-- Upload Progress -->
+    <div id="uploadProgress" class="hidden mb-4">
+      <div class="bg-white rounded-lg border p-3">
+        <div class="flex justify-between text-sm mb-1">
+          <span id="uploadLabel" class="text-gray-600">Uploading...</span>
+          <span id="uploadPercent" class="text-blue-500 font-medium">0%</span>
+        </div>
+        <div class="w-full bg-gray-200 rounded-full h-2">
+          <div id="uploadBar" class="bg-blue-500 h-2 rounded-full progress-bar" style="width:0%"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- File List -->
+    <div class="bg-white rounded-xl border shadow-sm overflow-hidden">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
+            <th class="text-left py-3 px-4">Name</th>
+            <th class="text-right py-3 px-4 hidden sm:table-cell">Size</th>
+            <th class="text-right py-3 px-4 hidden md:table-cell">Modified</th>
+            <th class="text-right py-3 px-4 w-24">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="fileList"></tbody>
+      </table>
+      <div id="emptyState" class="hidden text-center py-12 text-gray-400">
+        <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"/></svg>
+        <p>This folder is empty</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Folder Modal -->
+  <div id="modal" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center hidden z-50" onclick="if(event.target===this)closeModal()">
+    <div class="bg-white rounded-xl p-6 w-80 shadow-xl fade-in">
+      <h3 class="text-lg font-semibold mb-4">New Folder</h3>
+      <input id="folderNameInput" type="text" placeholder="Folder name"
+        class="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 mb-4"
+        onkeydown="if(event.key==='Enter')createFolder()">
+      <div class="flex justify-end gap-2">
+        <button onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition">Cancel</button>
+        <button onclick="createFolder()" class="px-4 py-2 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Confirmation Modal -->
+  <div id="deleteModal" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center hidden z-50" onclick="if(event.target===this)closeDeleteModal()">
+    <div class="bg-white rounded-xl p-6 w-80 shadow-xl fade-in">
+      <h3 class="text-lg font-semibold mb-2">Delete</h3>
+      <p id="deleteMessage" class="text-sm text-gray-600 mb-4"></p>
+      <div class="flex justify-end gap-2">
+        <button onclick="closeDeleteModal()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition">Cancel</button>
+        <button id="deleteConfirmBtn" class="px-4 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- State ---
+    let currentPath = '';
+
+    // --- Base path detection (for reverse proxy / Tailscale Funnel) ---
+    const basePath = window.location.pathname.replace(/\/+$/, '');
+
+    // --- Helpers ---
+    function formatSize(bytes) {
+      if (bytes === 0) return '—';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(1024));
+      return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+    }
+
+    function formatDate(iso) {
+      const d = new Date(iso);
+      const now = new Date();
+      const diff = now - d;
+      if (diff < 60000) return 'just now';
+      if (diff < 3600000) return Math.floor(diff/60000) + 'm ago';
+      if (diff < 86400000) return Math.floor(diff/3600000) + 'h ago';
+      if (diff < 604800000) return Math.floor(diff/86400000) + 'd ago';
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+    }
+
+    function fileIcon(item) {
+      if (item.isDirectory) {
+        return '<svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>';
+      }
+      const ext = item.name.split('.').pop().toLowerCase();
+      const colors = { pdf:'text-red-400', jpg:'text-green-400', jpeg:'text-green-400', png:'text-green-400', gif:'text-green-400', webp:'text-green-400', mp4:'text-purple-400', mp3:'text-purple-400', zip:'text-yellow-500', tar:'text-yellow-500', gz:'text-yellow-500' };
+      const color = colors[ext] || 'text-gray-400';
+      return `<svg class="w-5 h-5 ${color}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>`;
+    }
+
+    // --- Navigation ---
+    function navigateTo(p) {
+      currentPath = p;
+      loadFiles();
+      updateBreadcrumbs();
+      // Update URL hash without triggering reload
+      window.location.hash = p ? encodeURIComponent(p) : '';
+    }
+
+    function updateBreadcrumbs() {
+      const nav = document.getElementById('breadcrumbs');
+      const parts = currentPath ? currentPath.split('/').filter(Boolean) : [];
+      let html = `<button onclick="navigateTo('')" class="hover:text-blue-500 font-medium transition">Documents</button>`;
+      let accumulated = '';
+      for (const part of parts) {
+        accumulated += (accumulated ? '/' : '') + part;
+        const p = accumulated;
+        html += `<span class="text-gray-300">/</span>`;
+        html += `<button onclick="navigateTo('${p.replace(/'/g, "\\'")}')" class="hover:text-blue-500 transition">${escapeHtml(part)}</button>`;
+      }
+      nav.innerHTML = html;
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // --- Load files ---
+    async function loadFiles() {
+      const tbody = document.getElementById('fileList');
+      const empty = document.getElementById('emptyState');
+      try {
+        const res = await fetch(basePath + '/api/files?path=' + encodeURIComponent(currentPath));
+        if (!res.ok) throw new Error('Failed to load');
+        const items = await res.json();
+
+        if (items.length === 0) {
+          tbody.innerHTML = '';
+          empty.classList.remove('hidden');
+          return;
+        }
+        empty.classList.add('hidden');
+
+        tbody.innerHTML = items.map(item => {
+          const itemPath = currentPath ? currentPath + '/' + item.name : item.name;
+          return `
+            <tr class="border-t hover:bg-gray-50 transition fade-in">
+              <td class="py-3 px-4">
+                <div class="flex items-center gap-3">
+                  ${fileIcon(item)}
+                  ${item.isDirectory
+                    ? `<button onclick="navigateTo('${itemPath.replace(/'/g, "\\'")}')" class="text-gray-800 hover:text-blue-500 font-medium text-left transition truncate">${escapeHtml(item.name)}</button>`
+                    : `<span class="text-gray-800 truncate">${escapeHtml(item.name)}</span>`
+                  }
+                </div>
+              </td>
+              <td class="py-3 px-4 text-right text-gray-500 hidden sm:table-cell whitespace-nowrap">${item.isDirectory ? '—' : formatSize(item.size)}</td>
+              <td class="py-3 px-4 text-right text-gray-500 hidden md:table-cell whitespace-nowrap">${formatDate(item.modified)}</td>
+              <td class="py-3 px-4 text-right">
+                <div class="flex items-center justify-end gap-1">
+                  ${!item.isDirectory ? `
+                    <a href="${basePath}/api/download?path=${encodeURIComponent(itemPath)}"
+                       class="p-1.5 hover:bg-blue-50 rounded-lg text-gray-400 hover:text-blue-500 transition" title="Download">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                    </a>
+                  ` : ''}
+                  <button onclick="confirmDelete('${itemPath.replace(/'/g, "\\'")}', '${escapeHtml(item.name)}', ${item.isDirectory})"
+                    class="p-1.5 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500 transition" title="Delete">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>`;
+        }).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="4" class="py-8 text-center text-red-500">${escapeHtml(err.message)}</td></tr>`;
+        empty.classList.add('hidden');
+      }
+    }
+
+    // --- Upload ---
+    function handleFileSelect(files) {
+      if (!files.length) return;
+      uploadFiles(files);
+    }
+
+    async function uploadFiles(files) {
+      const formData = new FormData();
+      for (const f of files) formData.append('files', f);
+
+      const progress = document.getElementById('uploadProgress');
+      const bar = document.getElementById('uploadBar');
+      const label = document.getElementById('uploadLabel');
+      const pct = document.getElementById('uploadPercent');
+
+      progress.classList.remove('hidden');
+      bar.style.width = '0%';
+      label.textContent = `Uploading ${files.length} file${files.length > 1 ? 's' : ''}...`;
+
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', basePath + '/api/upload?path=' + encodeURIComponent(currentPath));
+
+        xhr.upload.addEventListener('progress', e => {
+          if (e.lengthComputable) {
+            const percent = Math.round((e.loaded / e.total) * 100);
+            bar.style.width = percent + '%';
+            pct.textContent = percent + '%';
+          }
+        });
+
+        await new Promise((resolve, reject) => {
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve();
+            else reject(new Error('Upload failed'));
+          };
+          xhr.onerror = () => reject(new Error('Network error'));
+          xhr.send(formData);
+        });
+
+        bar.style.width = '100%';
+        pct.textContent = '100%';
+        label.textContent = 'Upload complete!';
+        label.classList.add('text-green-600');
+        setTimeout(() => {
+          progress.classList.add('hidden');
+          label.classList.remove('text-green-600');
+        }, 2000);
+        loadFiles();
+      } catch (err) {
+        label.textContent = 'Upload failed: ' + err.message;
+        label.classList.add('text-red-500');
+        setTimeout(() => {
+          progress.classList.add('hidden');
+          label.classList.remove('text-red-500');
+        }, 3000);
+      }
+
+      // Reset file input
+      document.getElementById('fileInput').value = '';
+    }
+
+    // --- Drag and Drop ---
+    const dropzone = document.getElementById('dropzone');
+
+    ['dragenter', 'dragover'].forEach(evt => {
+      document.addEventListener(evt, e => {
+        e.preventDefault();
+        dropzone.classList.add('drop-active');
+      });
+    });
+
+    ['dragleave', 'drop'].forEach(evt => {
+      document.addEventListener(evt, e => {
+        e.preventDefault();
+        dropzone.classList.remove('drop-active');
+      });
+    });
+
+    document.addEventListener('drop', e => {
+      e.preventDefault();
+      const files = e.dataTransfer.files;
+      if (files.length) uploadFiles(files);
+    });
+
+    // --- New Folder ---
+    function showNewFolderModal() {
+      document.getElementById('modal').classList.remove('hidden');
+      const input = document.getElementById('folderNameInput');
+      input.value = '';
+      setTimeout(() => input.focus(), 50);
+    }
+
+    function closeModal() {
+      document.getElementById('modal').classList.add('hidden');
+    }
+
+    async function createFolder() {
+      const name = document.getElementById('folderNameInput').value.trim();
+      if (!name) return;
+      closeModal();
+      try {
+        const res = await fetch(basePath + '/api/mkdir?path=' + encodeURIComponent(currentPath), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name })
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          alert(data.error || 'Failed to create folder');
+          return;
+        }
+        loadFiles();
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    }
+
+    // --- Delete ---
+    let pendingDeletePath = '';
+
+    function confirmDelete(itemPath, name, isDir) {
+      pendingDeletePath = itemPath;
+      document.getElementById('deleteMessage').textContent =
+        `Are you sure you want to delete "${name}"${isDir ? ' and all its contents' : ''}?`;
+      document.getElementById('deleteModal').classList.remove('hidden');
+      document.getElementById('deleteConfirmBtn').onclick = doDelete;
+    }
+
+    function closeDeleteModal() {
+      document.getElementById('deleteModal').classList.add('hidden');
+      pendingDeletePath = '';
+    }
+
+    async function doDelete() {
+      const pathToDelete = pendingDeletePath;
+      closeDeleteModal();
+      try {
+        const res = await fetch(basePath + '/api/files?path=' + encodeURIComponent(pathToDelete), { method: 'DELETE' });
+        if (!res.ok) {
+          const data = await res.json();
+          alert(data.error || 'Delete failed');
+          return;
+        }
+        loadFiles();
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    }
+
+    // --- Keyboard shortcuts ---
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        closeModal();
+        closeDeleteModal();
+      }
+    });
+
+    // --- Init ---
+    function init() {
+      // Restore path from URL hash
+      const hash = window.location.hash.slice(1);
+      if (hash) currentPath = decodeURIComponent(hash);
+      updateBreadcrumbs();
+      loadFiles();
+    }
+
+    window.addEventListener('hashchange', () => {
+      const hash = window.location.hash.slice(1);
+      currentPath = hash ? decodeURIComponent(hash) : '';
+      updateBreadcrumbs();
+      loadFiles();
+    });
+
+    init();
+  </script>
+</body>
+</html>

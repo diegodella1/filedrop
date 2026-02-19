@@ -1,0 +1,15 @@
+[Unit]
+Description=FileDrop Web File Manager
+After=network.target
+
+[Service]
+Type=simple
+User=diego
+WorkingDirectory=/home/diego/Documents/filedrop
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
