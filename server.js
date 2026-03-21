@@ -3,12 +3,108 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs/promises');
 const fsSync = require('fs');
+const crypto = require('crypto');
+const archiver = require('archiver');
 
 const app = express();
 const router = express.Router();
 const PORT = 3456;
 const BASE_DIR = '/home/diego/Documents';
 const SELF_DIR = path.join(BASE_DIR, 'filedrop');
+
+// --- Auth ---
+
+const ADMIN_SECRET = process.env.ADMIN_SECRET;
+if (!ADMIN_SECRET) {
+  console.error('ADMIN_SECRET env var is required');
+  process.exit(1);
+}
+
+const TOKEN_HASH = crypto.createHash('sha256').update(ADMIN_SECRET).digest('hex');
+
+function parseCookies(req) {
+  const cookies = {};
+  const header = req.headers.cookie;
+  if (!header) return cookies;
+  header.split(';').forEach(c => {
+    const [key, ...val] = c.split('=');
+    cookies[key.trim()] = val.join('=').trim();
+  });
+  return cookies;
+}
+
+function isAuthenticated(req) {
+  const cookie = parseCookies(req)['filedrop_auth'];
+  if (!cookie || cookie.length !== TOKEN_HASH.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(cookie), Buffer.from(TOKEN_HASH));
+}
+
+const LOGIN_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FileDrop — Login</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-50 min-h-screen flex items-center justify-center">
+  <div class="bg-white rounded-xl shadow-sm border p-8 w-80">
+    <div class="flex items-center gap-2 mb-6">
+      <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+      <h1 class="text-xl font-bold text-gray-800">FileDrop</h1>
+    </div>
+    <form id="loginForm">
+      <input id="secret" type="password" placeholder="Admin secret" autocomplete="current-password"
+        class="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 mb-4">
+      <p id="error" class="text-red-500 text-sm mb-3 hidden">Invalid secret</p>
+      <button type="submit" class="w-full bg-blue-500 hover:bg-blue-600 text-white text-sm py-2 rounded-lg transition font-medium">Log in</button>
+    </form>
+  </div>
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const secret = document.getElementById('secret').value;
+      const res = await fetch(location.pathname.replace(/\\/+$/, '') + '/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secret })
+      });
+      if (res.ok) {
+        location.reload();
+      } else {
+        document.getElementById('error').classList.remove('hidden');
+      }
+    });
+  </script>
+</body>
+</html>`;
+
+app.use(express.json());
+
+// Login endpoint — before auth middleware
+app.post('/api/login', (req, res) => {
+  const { secret } = req.body || {};
+  if (!secret || secret.length !== ADMIN_SECRET.length ||
+      !crypto.timingSafeEqual(Buffer.from(secret), Buffer.from(ADMIN_SECRET))) {
+    return res.status(401).json({ error: 'Invalid secret' });
+  }
+  res.setHeader('Set-Cookie',
+    `filedrop_auth=${TOKEN_HASH}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${30 * 24 * 3600}`);
+  res.json({ ok: true });
+});
+
+// Logout endpoint
+app.post('/api/logout', (_req, res) => {
+  res.setHeader('Set-Cookie', 'filedrop_auth=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');
+  res.json({ ok: true });
+});
+
+// Auth middleware — block everything else if not authenticated
+app.use((req, res, next) => {
+  if (isAuthenticated(req)) return next();
+  if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Unauthorized' });
+  res.send(LOGIN_HTML);
+});
 
 // --- Path safety ---
 
@@ -100,6 +196,126 @@ router.get('/api/download', (req, res) => {
     return res.status(404).json({ error: 'File not found' });
   }
   res.download(filePath);
+});
+
+// --- API: Download multiple files as zip ---
+
+router.post('/api/download-batch', express.json(), async (req, res) => {
+  const paths = req.body && req.body.paths;
+  if (!Array.isArray(paths) || paths.length === 0) {
+    return res.status(400).json({ error: 'No paths provided' });
+  }
+  if (paths.length > 500) {
+    return res.status(400).json({ error: 'Too many items' });
+  }
+
+  // Validate all paths first
+  const resolved = [];
+  for (const p of paths) {
+    const target = safePath(p);
+    if (!target || target === BASE_DIR) {
+      return res.status(400).json({ error: `Invalid path: ${p}` });
+    }
+    try {
+      const stat = await fs.stat(target);
+      resolved.push({ rel: p, abs: target, isDir: stat.isDirectory() });
+    } catch {
+      return res.status(404).json({ error: `Not found: ${p}` });
+    }
+  }
+
+  const zipName = resolved.length === 1
+    ? path.basename(resolved[0].abs) + '.zip'
+    : 'filedrop-download.zip';
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
+
+  const archive = archiver('zip', { zlib: { level: 5 } });
+  archive.on('error', err => {
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+    else res.end();
+  });
+  archive.pipe(res);
+
+  for (const item of resolved) {
+    const name = path.basename(item.abs);
+    if (item.isDir) {
+      archive.directory(item.abs, name);
+    } else {
+      archive.file(item.abs, { name });
+    }
+  }
+
+  archive.finalize();
+});
+
+// --- API: Rename file or folder ---
+
+router.patch('/api/files', express.json(), async (req, res) => {
+  const target = safePath(req.query.path);
+  if (!target) return res.status(400).json({ error: 'Invalid path' });
+  if (target === BASE_DIR) return res.status(400).json({ error: 'Cannot rename root directory' });
+
+  const newName = req.body && req.body.name;
+  if (!newName || newName.includes('/') || newName.includes('..')) {
+    return res.status(400).json({ error: 'Invalid name' });
+  }
+
+  const newPath = path.join(path.dirname(target), newName);
+  // Validate the new path is still within BASE_DIR
+  if (!newPath.startsWith(BASE_DIR + path.sep)) {
+    return res.status(400).json({ error: 'Invalid path' });
+  }
+  if (newPath === SELF_DIR || newPath.startsWith(SELF_DIR + path.sep)) {
+    return res.status(400).json({ error: 'Invalid path' });
+  }
+
+  try {
+    await fs.access(target);
+    try {
+      await fs.access(newPath);
+      return res.status(409).json({ error: 'A file or folder with that name already exists' });
+    } catch {}
+    await fs.rename(target, newPath);
+    res.json({ renamed: newName });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'Not found' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- API: Bulk delete ---
+
+router.post('/api/delete-batch', express.json(), async (req, res) => {
+  const paths = req.body && req.body.paths;
+  if (!Array.isArray(paths) || paths.length === 0) {
+    return res.status(400).json({ error: 'No paths provided' });
+  }
+  if (paths.length > 500) {
+    return res.status(400).json({ error: 'Too many items' });
+  }
+
+  const results = { deleted: [], errors: [] };
+  for (const p of paths) {
+    const target = safePath(p);
+    if (!target || target === BASE_DIR) {
+      results.errors.push({ path: p, error: 'Invalid path' });
+      continue;
+    }
+    try {
+      const stat = await fs.stat(target);
+      if (stat.isDirectory()) {
+        await fs.rm(target, { recursive: true });
+      } else {
+        await fs.unlink(target);
+      }
+      results.deleted.push(p);
+    } catch (err) {
+      results.errors.push({ path: p, error: err.message });
+    }
+  }
+  res.json(results);
 });
 
 // --- API: Delete file or folder ---
